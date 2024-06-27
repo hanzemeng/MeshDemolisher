@@ -26,14 +26,6 @@ public class CDT_Test : MonoBehaviour
         Enumerable.Range(0, tetrahedronsParent.childCount).Select(i=>tetrahedronsParent.GetChild(i)).ToList().ForEach(x=>x.localScale=cellScale*Vector3.one);
     }
 
-    private void Update()
-    {
-        if(Input.GetKeyDown(KeyCode.X))
-        {
-            Tetrahedralization();
-        }
-    }
-
     [ContextMenu("Delaunay Test")]
     public void Delaunay()
     {

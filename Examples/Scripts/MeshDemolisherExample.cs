@@ -71,6 +71,23 @@ public class MeshDemolisherExample : MonoBehaviour
         targetGameObject.SetActive(false);
     }
 
+    [ContextMenu("Demolish Async")]
+    public async void DemolishAsync()
+    {
+        Enumerable.Range(0,resultParent.childCount).Select(i=>resultParent.GetChild(i)).ToList().ForEach(x=>DestroyImmediate(x.gameObject));
+        List<Transform> breakPoints = Enumerable.Range(0,breakPointsParent.childCount).Select(x=>breakPointsParent.GetChild(x)).ToList();
+
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        List<GameObject> res = await meshDemolisher.DemolishAsync(targetGameObject, breakPoints, interiorMaterial);
+        watch.Stop();
+        logText.text = $"Demolish time: {watch.ElapsedMilliseconds}ms.";
+
+        res.ForEach(x=>x.transform.SetParent(resultParent, true));
+        Enumerable.Range(0,resultParent.childCount).Select(i=>resultParent.GetChild(i)).ToList().ForEach(x=>x.localScale=resultScale*Vector3.one);
+
+        targetGameObject.SetActive(false);
+    }
+
     [ContextMenu("Reset")]
     public void Reset()
     {

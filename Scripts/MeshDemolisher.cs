@@ -1,5 +1,6 @@
 using System.Linq;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using UnityEngine;
 using UnityEngine.Rendering;
 
@@ -8,9 +9,10 @@ namespace Hanzzz.MeshDemolisher
 
 public class MeshDemolisher
 {
+    private static VertexAttribute[] VERTEX_TEXTURE_ATTRIBUTES = new VertexAttribute[]{VertexAttribute.TexCoord0, VertexAttribute.TexCoord1,VertexAttribute.TexCoord2,VertexAttribute.TexCoord3,VertexAttribute.TexCoord4,VertexAttribute.TexCoord5,VertexAttribute.TexCoord6,VertexAttribute.TexCoord7};
+
     private ClippedVoronoi cv;
 
-    private static VertexAttribute[] VERTEX_TEXTURE_ATTRIBUTES = new VertexAttribute[]{VertexAttribute.TexCoord0, VertexAttribute.TexCoord1,VertexAttribute.TexCoord2,VertexAttribute.TexCoord3,VertexAttribute.TexCoord4,VertexAttribute.TexCoord5,VertexAttribute.TexCoord6,VertexAttribute.TexCoord7};
 
     public MeshDemolisher()
     {
@@ -57,207 +59,220 @@ public class MeshDemolisher
 
     public List<GameObject> Demolish(GameObject targetGameObject, List<Transform> demolishPoints, Material interiorMaterial)
     {
-        List<GameObject> res = new List<GameObject>();
-
         Mesh targetMesh = targetGameObject.GetComponent<MeshFilter>().sharedMesh;
+        
+        List<Vector3> breakPoints = demolishPoints.Select(x=>x.position).ToList();
+        List<Vector3> meshVertices = targetMesh.vertices.ToList();
         Transform targetTransform = targetGameObject.transform;
+        meshVertices = meshVertices.Select(x=>targetTransform.TransformPoint(x)).ToList();
+        List<int> meshTriangles = new List<int>();
+        meshTriangles = targetMesh.triangles.ToList();
+        cv.CalculateClippedVoronoi(breakPoints, meshVertices, meshTriangles);
 
-        {
-            List<Vector3> voronoiPoints = demolishPoints.Select(x=>x.position).ToList();
-            List<Vector3> meshVertices = new List<Vector3>();
-            targetMesh.GetVertices(meshVertices);
-            meshVertices = meshVertices.Select(x=>targetTransform.TransformPoint(x)).ToList();
-            List<int> meshTriangles = new List<int>();
-            meshTriangles = targetMesh.triangles.ToList();
-            cv.CalculateClippedVoronoi(voronoiPoints, meshVertices, meshTriangles);
-        }
+        Material targetMeshMaterial = targetGameObject.GetComponent<MeshRenderer>().sharedMaterial;
+        return ConstructGameObjects(targetMesh, targetMeshMaterial, interiorMaterial);
+    }
+    public async Task<List<GameObject>> DemolishAsync(GameObject targetGameObject, List<Transform> demolishPoints, Material interiorMaterial)
+    {
+        Mesh targetMesh = targetGameObject.GetComponent<MeshFilter>().sharedMesh;
 
-        Material meshMaterial = targetGameObject.GetComponent<MeshRenderer>().sharedMaterial;
+        List<Vector3> breakPoints = demolishPoints.Select(x=>x.position).ToList();
+        List<Vector3> meshVertices = targetMesh.vertices.ToList();
+        Transform targetTransform = targetGameObject.transform;
+        meshVertices = meshVertices.Select(x=>targetTransform.TransformPoint(x)).ToList();
+        List<int> meshTriangles = new List<int>();
+        meshTriangles = targetMesh.triangles.ToList();
+        await Task.Run(()=>cv.CalculateClippedVoronoi(breakPoints, meshVertices, meshTriangles));
+
+        Material targetMeshMaterial = targetGameObject.GetComponent<MeshRenderer>().sharedMaterial;
+        return ConstructGameObjects(targetMesh, targetMeshMaterial, interiorMaterial);
+    }
+
+    private List<GameObject> ConstructGameObjects(Mesh targetMesh, Material targetMeshMaterial, Material interiorMaterial)
+    {
+        List<GameObject> res = new List<GameObject>();
         Dictionary<VertexAttribute, List<FloatStruct>> originalVerticesAttributes = GetOriginalVerticesAttributes(targetMesh);
 
+        List<IPointLocation> clipPoints = cv.clipPoints;
+        Dictionary<int, HashSet<List<int>>> clipVoronoiCellsExterior = cv.clipVoronoiCellsExterior;
+        Dictionary<int, HashSet<List<int>>> clipVoronoiCellsInterior = cv.clipVoronoiCellsInterior;
+        Dictionary<int, List<(List<(int,Point3D)>,double)>> exteriorPointsMappings = cv.exteriorPointsMappings;
+
+        foreach(int cellIndex in clipVoronoiCellsExterior.Keys)
         {
-            List<IPointLocation> clipPoints = cv.clipPoints;
-            Dictionary<int, HashSet<List<int>>> clipVoronoiCellsExterior = cv.clipVoronoiCellsExterior;
-            Dictionary<int, HashSet<List<int>>> clipVoronoiCellsInterior = cv.clipVoronoiCellsInterior;
-            Dictionary<int, List<(List<(int,Point3D)>,double)>> exteriorPointsMappings = cv.exteriorPointsMappings;
+            GameObject g = new GameObject();
+            g.name = $"{cellIndex}";
+            MeshFilter meshFilter = g.AddComponent<MeshFilter>();
+            MeshRenderer meshRenderer = g.AddComponent<MeshRenderer>();
+            Mesh mesh = new Mesh();
+            List<Vector3> vertices = new List<Vector3>();
+            Dictionary<VertexAttribute, List<FloatStruct>> newVerticesAttributes = CreateEmptyVerticesAttributes(originalVerticesAttributes);
+            List<int> trianglesExterior = new List<int>();
+            List<int> trianglesInterior = new List<int>();
 
-            foreach(int cellIndex in clipVoronoiCellsExterior.Keys)
+            int index = 0;
+            foreach(var bound in clipVoronoiCellsExterior[cellIndex])
             {
+                int n = bound.Count;
+                Point3D center = bound.Aggregate(new Point3D(0d,0d,0d), (sum,next)=>sum+clipPoints[next].ToPoint3D()) / n;
+                vertices.AddRange(bound.Select(x=>clipPoints[x].ToPoint3D().ToVector3()));
+                vertices.Add(center.ToVector3());
+                InterpolateOriginalVerticesAttributes(clipPoints,bound,exteriorPointsMappings,newVerticesAttributes, originalVerticesAttributes);
 
-                GameObject g = new GameObject();
-                g.name = $"{cellIndex}";
-                MeshFilter meshFilter = g.AddComponent<MeshFilter>();
-                MeshRenderer meshRenderer = g.AddComponent<MeshRenderer>();
-                Mesh mesh = new Mesh();
-                List<Vector3> vertices = new List<Vector3>();
-                Dictionary<VertexAttribute, List<FloatStruct>> newVerticesAttributes = CreateEmptyVerticesAttributes(originalVerticesAttributes);
-                List<int> trianglesExterior = new List<int>();
-                List<int> trianglesInterior = new List<int>();
-
-                int index = 0;
-                foreach(var bound in clipVoronoiCellsExterior[cellIndex])
+                for(int i=0; i<n; i++)
                 {
-                    int n = bound.Count;
-                    Point3D center = bound.Aggregate(new Point3D(0d,0d,0d), (sum,next)=>sum+clipPoints[next].ToPoint3D()) / n;
-                    vertices.AddRange(bound.Select(x=>clipPoints[x].ToPoint3D().ToVector3()));
-                    vertices.Add(center.ToVector3());
-                    InterpolateOriginalVerticesAttributes(clipPoints,bound,exteriorPointsMappings,newVerticesAttributes, originalVerticesAttributes);
-
-                    for(int i=0; i<n; i++)
-                    {
-                        trianglesExterior.Add(index+n);
-                        trianglesExterior.Add(index+(i+1)%n);
-                        trianglesExterior.Add(index+i);
-                    }
-                    index += n+1;
+                    trianglesExterior.Add(index+n);
+                    trianglesExterior.Add(index+(i+1)%n);
+                    trianglesExterior.Add(index+i);
                 }
-
-                foreach(var bound in clipVoronoiCellsInterior[cellIndex])
-                {
-                    int n = bound.Count;
-                    Point3D center = bound.Aggregate(new Point3D(0d,0d,0d), (sum,next)=>sum+clipPoints[next].ToPoint3D()) / n;
-                    vertices.AddRange(bound.Select(x=>clipPoints[x].ToPoint3D().ToVector3()));
-                    vertices.Add(center.ToVector3());
-                    AddDefaultVerticesAttributes(bound, newVerticesAttributes);
-                    
-                    for(int i=0; i<n; i++)
-                    {
-                        trianglesInterior.Add(index+n);
-                        trianglesInterior.Add(index+(i+1)%n);
-                        trianglesInterior.Add(index+i);
-                    }
-                    index += n+1;
-                }
-
-
-                mesh.vertices = vertices.ToArray();
-                Vector3 oldCenter = mesh.bounds.center;
-                for(int j=0; j<vertices.Count; j++)
-                {
-                    vertices[j] -= oldCenter;
-                }
-                mesh.vertices = vertices.ToArray();
-                mesh.RecalculateBounds();
-                g.transform.position = oldCenter-mesh.bounds.center;
-
-                for(int j=0; j<VERTEX_TEXTURE_ATTRIBUTES.Length; j++)
-                {
-                    if(!originalVerticesAttributes.ContainsKey(VERTEX_TEXTURE_ATTRIBUTES[j]))
-                    {
-                        continue;
-                    }
-
-                    int dimension = originalVerticesAttributes[VERTEX_TEXTURE_ATTRIBUTES[j]][0].dimension;
-
-                    switch(dimension)
-                    {
-                        case 2:
-                        {
-                            List<Vector2> temp = newVerticesAttributes[VERTEX_TEXTURE_ATTRIBUTES[j]].Select(x=>x.ToVector2()).ToList();
-                            mesh.SetUVs(j,temp);
-                            break;
-                        }
-                        case 3:
-                        {
-                            List<Vector3> temp = newVerticesAttributes[VERTEX_TEXTURE_ATTRIBUTES[j]].Select(x=>x.ToVector3()).ToList();
-                            mesh.SetUVs(j,temp);
-                            break;
-                        }
-                        case 4:
-                        {
-                            List<Vector4> temp = newVerticesAttributes[VERTEX_TEXTURE_ATTRIBUTES[j]].Select(x=>x.ToVector4()).ToList();
-                            mesh.SetUVs(j,temp);
-                            break;
-                        }
-                    }
-                }
-                if(originalVerticesAttributes.ContainsKey(VertexAttribute.Color))
-                {
-                    List<Color> temp = newVerticesAttributes[VertexAttribute.Color].Select(x=>x.ToColor()).ToList();
-                    mesh.SetColors(temp);
-                }
-
-
-                mesh.subMeshCount = 2;
-                mesh.SetTriangles(trianglesExterior, 0);
-                mesh.SetTriangles(trianglesInterior, 1);
-                mesh.RecalculateNormals();
-                mesh.RecalculateTangents();
-                meshFilter.mesh = mesh;
-                meshRenderer.materials = new Material[] {meshMaterial, interiorMaterial};
-
-                res.Add(g);
-            }    
-
-            var voronoiPoints = cv.voronoiPoints;
-            var voronoiFaces = cv.voronoiFaces;
-            var voronoiFacesCenters = cv.voronoiFacesCenters;
-            var voronoiCells = cv.voronoiCells;
-            var interiorVoronoiCells = cv.interiorVoronoiCells;
-
-            for(int i=0; i<interiorVoronoiCells.Count; i++)
-            {
-                List<(int,bool)> cell = voronoiCells[interiorVoronoiCells[i]];
-                GameObject g = new GameObject();
-                g.name = i.ToString();
-                MeshFilter meshFilter = g.AddComponent<MeshFilter>();
-                MeshRenderer meshRenderer = g.AddComponent<MeshRenderer>();
-
-                Mesh mesh = new Mesh();
-                List<Vector3> vertices = new List<Vector3>();
-                List<int> triangles = new List<int>();
-
-                int index = 0;
-                foreach(var face in cell)
-                {
-                    List<Point3D> points = voronoiFaces[face.Item1].Select(x=>voronoiPoints[x]).ToList();
-
-                    int n = points.Count;
-                    Point3D center = voronoiFacesCenters[face.Item1];
-                    points.Add(center);
-
-                    vertices.AddRange(points.Select(x=>x.ToVector3()).ToList());
-                    if(face.Item2)
-                    {
-                        for(int j=0; j<n; j++)
-                        {
-                            triangles.Add(index+n);
-                            triangles.Add(index+(j+1)%n);
-                            triangles.Add(index+j);
-                        }
-                    }
-                    else
-                    {
-                        for(int j=0; j<n; j++)
-                        {
-                            triangles.Add(index+n);
-                            triangles.Add(index+j);
-                            triangles.Add(index+(j+1)%n);
-                        }
-                    }
-                    index += n+1;
-                }
-
-                mesh.vertices = vertices.ToArray();
-                mesh.triangles = triangles.ToArray();
-
-                Vector3 oldCenter = mesh.bounds.center;
-                for(int j=0; j<vertices.Count; j++)
-                {
-                    vertices[j] -= oldCenter;
-                }
-                mesh.vertices = vertices.ToArray();
-                mesh.RecalculateBounds();
-                g.transform.position = oldCenter-mesh.bounds.center;
-                mesh.RecalculateNormals();
-                mesh.RecalculateTangents();
-                meshFilter.mesh = mesh;
-
-                meshRenderer.material = interiorMaterial;
-                res.Add(g);
+                index += n+1;
             }
-        }
 
+            foreach(var bound in clipVoronoiCellsInterior[cellIndex])
+            {
+                int n = bound.Count;
+                Point3D center = bound.Aggregate(new Point3D(0d,0d,0d), (sum,next)=>sum+clipPoints[next].ToPoint3D()) / n;
+                vertices.AddRange(bound.Select(x=>clipPoints[x].ToPoint3D().ToVector3()));
+                vertices.Add(center.ToVector3());
+                AddDefaultVerticesAttributes(bound, newVerticesAttributes);
+                    
+                for(int i=0; i<n; i++)
+                {
+                    trianglesInterior.Add(index+n);
+                    trianglesInterior.Add(index+(i+1)%n);
+                    trianglesInterior.Add(index+i);
+                }
+                index += n+1;
+            }
+
+
+            mesh.vertices = vertices.ToArray();
+            Vector3 oldCenter = mesh.bounds.center;
+            for(int j=0; j<vertices.Count; j++)
+            {
+                vertices[j] -= oldCenter;
+            }
+            mesh.vertices = vertices.ToArray();
+            mesh.RecalculateBounds();
+            g.transform.position = oldCenter-mesh.bounds.center;
+
+            for(int j=0; j<VERTEX_TEXTURE_ATTRIBUTES.Length; j++)
+            {
+                if(!originalVerticesAttributes.ContainsKey(VERTEX_TEXTURE_ATTRIBUTES[j]))
+                {
+                    continue;
+                }
+
+                int dimension = originalVerticesAttributes[VERTEX_TEXTURE_ATTRIBUTES[j]][0].dimension;
+
+                switch(dimension)
+                {
+                    case 2:
+                    {
+                        List<Vector2> temp = newVerticesAttributes[VERTEX_TEXTURE_ATTRIBUTES[j]].Select(x=>x.ToVector2()).ToList();
+                        mesh.SetUVs(j,temp);
+                        break;
+                    }
+                    case 3:
+                    {
+                        List<Vector3> temp = newVerticesAttributes[VERTEX_TEXTURE_ATTRIBUTES[j]].Select(x=>x.ToVector3()).ToList();
+                        mesh.SetUVs(j,temp);
+                        break;
+                    }
+                    case 4:
+                    {
+                        List<Vector4> temp = newVerticesAttributes[VERTEX_TEXTURE_ATTRIBUTES[j]].Select(x=>x.ToVector4()).ToList();
+                        mesh.SetUVs(j,temp);
+                        break;
+                    }
+                }
+            }
+            if(originalVerticesAttributes.ContainsKey(VertexAttribute.Color))
+            {
+                List<Color> temp = newVerticesAttributes[VertexAttribute.Color].Select(x=>x.ToColor()).ToList();
+                mesh.SetColors(temp);
+            }
+
+
+            mesh.subMeshCount = 2;
+            mesh.SetTriangles(trianglesExterior, 0);
+            mesh.SetTriangles(trianglesInterior, 1);
+            mesh.RecalculateNormals();
+            mesh.RecalculateTangents();
+            meshFilter.mesh = mesh;
+            meshRenderer.materials = new Material[] {targetMeshMaterial, interiorMaterial};
+
+            res.Add(g);
+        }    
+
+        var voronoiPoints = cv.voronoiPoints;
+        var voronoiFaces = cv.voronoiFaces;
+        var voronoiFacesCenters = cv.voronoiFacesCenters;
+        var voronoiCells = cv.voronoiCells;
+        var interiorVoronoiCells = cv.interiorVoronoiCells;
+
+        for(int i=0; i<interiorVoronoiCells.Count; i++)
+        {
+            List<(int,bool)> cell = voronoiCells[interiorVoronoiCells[i]];
+            GameObject g = new GameObject();
+            g.name = i.ToString();
+            MeshFilter meshFilter = g.AddComponent<MeshFilter>();
+            MeshRenderer meshRenderer = g.AddComponent<MeshRenderer>();
+
+            Mesh mesh = new Mesh();
+            List<Vector3> vertices = new List<Vector3>();
+            List<int> triangles = new List<int>();
+
+            int index = 0;
+            foreach(var face in cell)
+            {
+                List<Point3D> points = voronoiFaces[face.Item1].Select(x=>voronoiPoints[x]).ToList();
+
+                int n = points.Count;
+                Point3D center = voronoiFacesCenters[face.Item1];
+                points.Add(center);
+
+                vertices.AddRange(points.Select(x=>x.ToVector3()).ToList());
+                if(face.Item2)
+                {
+                    for(int j=0; j<n; j++)
+                    {
+                        triangles.Add(index+n);
+                        triangles.Add(index+(j+1)%n);
+                        triangles.Add(index+j);
+                    }
+                }
+                else
+                {
+                    for(int j=0; j<n; j++)
+                    {
+                        triangles.Add(index+n);
+                        triangles.Add(index+j);
+                        triangles.Add(index+(j+1)%n);
+                    }
+                }
+                index += n+1;
+            }
+
+            mesh.vertices = vertices.ToArray();
+            mesh.triangles = triangles.ToArray();
+
+            Vector3 oldCenter = mesh.bounds.center;
+            for(int j=0; j<vertices.Count; j++)
+            {
+                vertices[j] -= oldCenter;
+            }
+            mesh.vertices = vertices.ToArray();
+            mesh.RecalculateBounds();
+            g.transform.position = oldCenter-mesh.bounds.center;
+            mesh.RecalculateNormals();
+            mesh.RecalculateTangents();
+            meshFilter.mesh = mesh;
+
+            meshRenderer.material = interiorMaterial;
+            res.Add(g);
+        }
+        
         return res;
     }
 
