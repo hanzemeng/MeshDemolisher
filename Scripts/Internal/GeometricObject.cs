@@ -200,33 +200,40 @@ public enum Sign
 
 public static class PointComputation
 {
-    [System.Runtime.InteropServices.DllImport("libIndirectPredicates")]
+
+    #if UNITY_EDITOR_OSX || UNITY_STANDALONE_OSX
+    private const string dllName = "IndirectPredicates_Mac";
+    #elif UNITY_EDITOR_WIN || UNITY_STANDALONE_WIN
+    private const string dllName = "IndirectPredicates_Windows";
+    #endif
+
+    [System.Runtime.InteropServices.DllImport(dllName)]
     private static extern void Initialize();
-    [System.Runtime.InteropServices.DllImport("libIndirectPredicates")]
+    [System.Runtime.InteropServices.DllImport(dllName)]
     private static extern void Reset();
-    [System.Runtime.InteropServices.DllImport("libIndirectPredicates")]
+    [System.Runtime.InteropServices.DllImport(dllName)]
     private static extern void AddExplicitPoint(double[] p);
-    [System.Runtime.InteropServices.DllImport("libIndirectPredicates")]
+    [System.Runtime.InteropServices.DllImport(dllName)]
     private static extern void AddImplicitPoint(double[] p0, double[] p1, double t);
-    [System.Runtime.InteropServices.DllImport("libIndirectPredicates")]
+    [System.Runtime.InteropServices.DllImport(dllName)]
     private static extern int Orient3D();
-    [System.Runtime.InteropServices.DllImport("libIndirectPredicates")]
+    [System.Runtime.InteropServices.DllImport(dllName)]
     private static extern int InCircumsphere();
-    [System.Runtime.InteropServices.DllImport("libIndirectPredicates")]
+    [System.Runtime.InteropServices.DllImport(dllName)]
     private static extern bool LineCrossInnerTriangle();
-    [System.Runtime.InteropServices.DllImport("libIndirectPredicates")]
+    [System.Runtime.InteropServices.DllImport(dllName)]
     private static extern bool LineCrossTriangle();
-    [System.Runtime.InteropServices.DllImport("libIndirectPredicates")]
+    [System.Runtime.InteropServices.DllImport(dllName)]
     private static extern int DotProductSign();
-    [System.Runtime.InteropServices.DllImport("libIndirectPredicates")]
+    [System.Runtime.InteropServices.DllImport(dllName)]
     private static extern bool SegmentCrossInnerSegment();
-    [System.Runtime.InteropServices.DllImport("libIndirectPredicates")]
+    [System.Runtime.InteropServices.DllImport(dllName)]
     private static extern bool PointInInnerSegment();
-    [System.Runtime.InteropServices.DllImport("libIndirectPredicates")]
+    [System.Runtime.InteropServices.DllImport(dllName)]
     private static extern bool InnerSegmentCrossInnerTriangle();
-    [System.Runtime.InteropServices.DllImport("libIndirectPredicates")]
+    [System.Runtime.InteropServices.DllImport(dllName)]
     private static extern bool PointInInnerTriangle();
-    [System.Runtime.InteropServices.DllImport("libIndirectPredicates")]
+    [System.Runtime.InteropServices.DllImport(dllName)]
     private static extern bool PointInTriangle();
 
 
